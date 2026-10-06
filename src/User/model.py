@@ -1,12 +1,13 @@
 from pydantic import field_serializer, BaseModel, EmailStr, Field, field_validator,model_validator
 from sqlalchemy import Column, DateTime, Integer, String, Boolean, Identity, Date, ForeignKey, Enum, UniqueConstraint, Text, Identity
-from sqlalchemy.orm import relationship, declarative_base, validates
+from sqlalchemy.orm import backref, relationship, declarative_base, validates
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
 from datetime import datetime, date, timedelta, timezone
 import enum
 from typing import Optional, List
 
+from src.utils.db import Base
 
 from src.utils.phone_validate import clean_and_validate_mobile
 from src.utils.dob_validate import convert_date_to_dict, convert_dict_to_date
@@ -50,7 +51,7 @@ class UserModel(Base):
     email = Column(String(500), nullable=False, unique=True)
     mobilenumber =Column("MOBILENUMBER", String(20), nullable=False)
     localization = Column(String(100), nullable=False)
-    bio = Column(String(1000), nullable=False)
+    bio = Column(String(1000), nullable=True, default="")
     _password_hash = Column('password_hash', String(64), nullable=False)
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now()) 
@@ -259,44 +260,48 @@ class PostModel(Base):
     text_content = Column("TEXT_CONTENT", Text, nullable=True)
     media_url = Column("MEDIA_URL", String(512), nullable=True)
     media_type = Column("MEDIA_TYPE", String(50), nullable=True)
-    
-    # 🚀 ENFORCE LOWERCASE ATTRIBUTE NAME FOR SQLALCHEMY KEYWORD MATCHING
     thumbnail_url = Column("THUMBNAIL_URL", String(512), nullable=True)
+    created_at = Column("CREATED_AT", DateTime, server_default=func.now(), index=True)
+    is_deleted = Column("IS_DELETED", Boolean, default=False, nullable=False)
+    
+    # Foreign Keys Tracking Blocks
+    user_id = Column("USER_ID", Integer, ForeignKey("USER_TABLE.ID", ondelete="CASCADE"), nullable=False, index=True)
+    author_id = Column("AUTHOR_ID", Integer, ForeignKey("USER_TABLE.ID"))
+    
+    # 📊 Metrics Counter Columns
+    likes_count = Column("LIKES_COUNT", Integer, server_default="0", default=0, nullable=False)
     dislikes_count = Column("DISLIKES_COUNT", Integer, server_default="0", default=0, nullable=False)
     shares_count = Column("SHARES_COUNT", Integer, server_default="0", default=0, nullable=False)
     views_count = Column("VIEWS_COUNT", Integer, server_default="0", default=0, nullable=False)
-    created_at = Column("CREATED_AT", DateTime, server_default=func.now(), index=True)
-    user_id = Column("USER_ID", Integer, ForeignKey("USER_TABLE.ID", ondelete="CASCADE"), nullable=False, index=True)
-    author_id = Column("AUTHOR_ID", Integer, ForeignKey("USER_TABLE.ID"))
-    likes_count = Column("LIKES_COUNT", Integer, server_default="0", default=0, nullable=False)
-    # Explicitly bind this relationship to the author_id column
-    author = relationship("UserModel", back_populates="posts", foreign_keys=[author_id])
-    likes_log = relationship("PostLikeModel", back_populates="post", cascade="all, delete-orphan")
-    shares_log = relationship("PostShareModel", back_populates="post", cascade="all, delete-orphan")
-    views_log = relationship("PostViewModel", back_populates="post", cascade="all, delete-orphan")
-    is_deleted = Column(Boolean, default=False, nullable=False)
     
-    # 🌟 NEW SOCIAL INTERACTION COLUMNS TO ADD HERE:
-    feeling = Column("FEELING", String(100), nullable=True)         # e.g., "Happy"
-    activity = Column("ACTIVITY", String(100), nullable=True)       # e.g., "Eating dinner"
-    checkin_place = Column("CHECKIN_PLACE", String(255), nullable=True) # e.g., "Starbucks Coffee"
-    checkin_metadata = Column("CHECKIN_METADATA", Text, nullable=True)  # Stores coordinates as JSON string
+    # 🎯 THE CRITICAL BACKEND FIX: Added the missing comments_count column variable field mapping!
+    comments_count = Column("COMMENTS_COUNT", Integer, server_default="0", default=0, nullable=False)
 
-    # Relationships (Your existing ones stay completely untouched)
+    # 🌟 Social Interaction & Checkin Columns
+    feeling = Column("FEELING", String(100), nullable=True)         
+    activity = Column("ACTIVITY", String(100), nullable=True)       
+    checkin_place = Column("CHECKIN_PLACE", String(255), nullable=True) 
+    checkin_metadata = Column("CHECKIN_METADATA", Text, nullable=True)  
+
+    # 👥 Unified Database Relationships (Cleaned, Deduplicated & Grouped)
     author = relationship("UserModel", back_populates="posts", foreign_keys=[author_id])
     likes_log = relationship("PostLikeModel", back_populates="post", cascade="all, delete-orphan")
     shares_log = relationship("PostShareModel", back_populates="post", cascade="all, delete-orphan")
     views_log = relationship("PostViewModel", back_populates="post", cascade="all, delete-orphan")
-    
-    # 🌟 NEW RELATIONSHIP FOR TAGGED FRIENDS LINK:
     tagged_friends = relationship("PostTagModel", back_populates="post", cascade="all, delete-orphan")
+    
+    comments_log = relationship(
+        "PostCommentModel", 
+        cascade="all, delete-orphan",
+        lazy="selectin" 
+    )
 
     viewed_by_users = relationship(
         "UserModel", 
-        secondary="POST_VIEWS_TABLE", # Maps directly through your tracking table
+        secondary="POST_VIEWS_TABLE", 
         primaryjoin="PostModel.id == PostViewModel.post_id",
         secondaryjoin="UserModel.id == PostViewModel.user_id",
-        viewonly=True # 👈 Crucial: Keeps this relationship read-only for high performance
+        viewonly=True 
     )
 
 class PostTagModel(Base):
@@ -337,9 +342,6 @@ class PostLikeModel(Base):
     __table_args__ = (UniqueConstraint('user_id', 'post_id', name='_user_post_like_uc'),)
     post = relationship("PostModel", back_populates="likes_log")
 
-from sqlalchemy import Column, Integer, ForeignKey, DateTime, func, Identity, UniqueConstraint
-from src.utils.db import Base
-
 class MediaGalleryModel(Base):
     __tablename__ = "USER_MEDIA_GALLERY"
     
@@ -354,3 +356,33 @@ class MediaGalleryModel(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     
+class PostCommentModel(Base):
+    __tablename__ = "POST_COMMENTS_TABLE"
+
+    id = Column("ID", Integer, primary_key=True, index=True)
+    post_id = Column("POST_ID", Integer, ForeignKey("POSTS_TABLE.ID", ondelete="CASCADE"), nullable=False, index=True)
+    author_id = Column("AUTHOR_ID", Integer, ForeignKey("USER_TABLE.ID", ondelete="CASCADE"), nullable=False, index=True)
+    parent_comment_id = Column("PARENT_COMMENT_ID", Integer, ForeignKey("POST_COMMENTS_TABLE.ID", ondelete="CASCADE"), nullable=True, index=True)
+    # 📝 Rich Text / Emoji Layer
+    text_content = Column("TEXT_CONTENT", Text, nullable=True) # Optional if user posts ONLY a GIF/Image
+    
+    # 🖼️ Multimedia Storage Layers
+    media_url = Column("MEDIA_URL", String(512), nullable=True) # Cloudinary storage path for device uploads
+    gif_url = Column("GIF_URL", String(512), nullable=True)     # Remote asset link for Giphy links
+    
+    # Base Control parameters
+    is_deleted = Column("IS_DELETED", Boolean, default=False, nullable=False)
+    created_at = Column("CREATED_AT", DateTime, server_default=func.now(), index=True)
+    deleted_at = Column("DELETED_AT", DateTime, nullable=True, default=None)
+    # Clean multi-table graph relationship bindings
+    author = relationship("UserModel", foreign_keys=[author_id])
+    post = relationship(
+        "PostModel", 
+        overlaps="comments_log" # 🌟 Tells SQLAlchemy to stop printing warning traces
+    ) 
+    replies = relationship(
+        "PostCommentModel",
+        cascade="all, delete-orphan",
+        primaryjoin="PostCommentModel.id == PostCommentModel.parent_comment_id",
+        backref=backref("parent", remote_side=[id])
+    )
