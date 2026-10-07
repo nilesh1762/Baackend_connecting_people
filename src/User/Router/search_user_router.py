@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from src.utils.db import init_db
 from src.utils.security import get_current_user_id
-from src.User.Controller.search_user_controller import search_users_by_username_controller
+from src.User.Controller.SearchController.search_user_controller import search_users_by_username_controller
 
 
 user_router = APIRouter(prefix="/user", tags=["Global Navigation Search"])

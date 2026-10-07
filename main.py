@@ -21,8 +21,6 @@ from src.Task.router import task_router
 
 import src.User.Router as user_router_package 
 from src.User.Router.WebsocketRouter.web_Scoket_router import ws_router as explicit_ws_router 
-from src.User.Router.MediaRouter.get_user_media_route import gallery_router
-from src.User.Router.MediaRouter.set_banner_media_route import banner_router
 # 1. Initialize DB Metadata (Creates Oracle tables safely case-insensitively)
 Base.metadata.create_all(bind=engine)
 
@@ -56,11 +54,18 @@ app.add_middleware(
 # 4. Mount Explicitly Imported Feature Modules
 app.include_router(task_router, tags=["Tasks"])
 app.include_router(explicit_ws_router)
-app.include_router(gallery_router)
-app.include_router(banner_router)
 # 5. Execute Dynamic Autoloading Pipeline for Sub-module AppRouters
-for _, module_name, _ in pkgutil.iter_modules(user_router_package.__path__):
-    full_module_name = f"{user_router_package.__name__}.{module_name}"
+explicit_router_packages = ("WebsocketRouter",)
+for module_info in pkgutil.walk_packages(
+    user_router_package.__path__,
+    prefix=f"{user_router_package.__name__}."
+):
+    full_module_name = module_info.name
+    if any(
+        full_module_name.startswith(f"{user_router_package.__name__}.{package}.")
+        for package in explicit_router_packages
+    ):
+        continue
     module = importlib.import_module(full_module_name)
     
     # Introspect internal module signatures for valid APIRouter instances

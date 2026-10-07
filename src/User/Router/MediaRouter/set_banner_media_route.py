@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Body, status, HTTPException
 from sqlalchemy.orm import Session
 from src.utils.db import init_db
 from src.utils.security import get_current_user_id
-from src.User.Controller.media_controller import sync_banner_metadata_to_db
+from src.User.Controller.MediaController.media_controller import sync_banner_metadata_to_db
 
 
 banner_router = APIRouter(prefix="/user", tags=["User Relationships"])

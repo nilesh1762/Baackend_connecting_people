@@ -368,6 +368,7 @@ class PostCommentModel(Base):
     
     # 🖼️ Multimedia Storage Layers
     media_url = Column("MEDIA_URL", String(512), nullable=True) # Cloudinary storage path for device uploads
+    media_type = Column("MEDIA_TYPE", String(20), nullable=True)
     gif_url = Column("GIF_URL", String(512), nullable=True)     # Remote asset link for Giphy links
     
     # Base Control parameters

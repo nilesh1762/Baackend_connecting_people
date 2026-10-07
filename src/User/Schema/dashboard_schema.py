@@ -34,6 +34,7 @@ class CommentItemSchema(BaseModel):
     id: int
     text: Optional[str] = None
     media_url: Optional[str] = None
+    media_type: Optional[str] = None
     gif_url: Optional[str] = None
     author_name: str
     author_avatar: Optional[str] = None
