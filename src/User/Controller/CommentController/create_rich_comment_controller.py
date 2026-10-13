@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 import cloudinary
 import cloudinary.uploader
@@ -23,11 +24,12 @@ MAX_VIDEO_SIZE = 100 * 1024 * 1024
 def create_rich_comment_controller(
     post_id: int,
     current_user_id: int,
-    text_content: str = None,
-    file: UploadFile = None,
-    attached_gif_url: str = None,
-    parent_comment_id: int = None,
-    db: Session = None
+    db: Session,
+    text_content: Optional[str] = None,
+    file: Optional[UploadFile] = None,
+    attached_gif_url: Optional[str] = None,
+    parent_comment_id: Optional[int] = None,
+    allow_video: bool = True,
 ) -> PostCommentModel:
     """🎬 Process multi-channel input parameters and write clean comment records safely."""
     
@@ -36,6 +38,21 @@ def create_rich_comment_controller(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
             detail="Comment content cannot be entirely empty."
+        )
+
+    parent_post = (
+        db.query(PostModel)
+        .filter(
+            PostModel.id == post_id,
+            PostModel.moderation_status == "approved",
+            PostModel.is_deleted == False,
+        )
+        .first()
+    )
+    if parent_post is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Post not found.",
         )
 
     saved_media_url = None
@@ -48,10 +65,15 @@ def create_rich_comment_controller(
             media_type = "gif" if content_type == "image/gif" else "image"
             resource_type = "image"
             max_size = MAX_IMAGE_SIZE
-        elif content_type.startswith("video/"):
+        elif content_type.startswith("video/") and allow_video:
             media_type = "video"
             resource_type = "video"
             max_size = MAX_VIDEO_SIZE
+        elif content_type.startswith("video/"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Repost comments can contain images or GIFs, not videos.",
+            )
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -98,9 +120,7 @@ def create_rich_comment_controller(
             db.add(new_comment)
             
             # C. Automatically increment the interaction counter cache on the parent post
-            parent_post = db.query(PostModel).filter(PostModel.id == post_id).first()
-            if parent_post:
-                parent_post.comments_count = (getattr(parent_post, "comments_count", 0) or 0) + 1
+            parent_post.comments_count = (getattr(parent_post, "comments_count", 0) or 0) + 1
 
         db.commit() # Flush transaction modifications together cleanly
         db.refresh(new_comment)

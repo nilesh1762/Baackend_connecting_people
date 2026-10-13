@@ -116,6 +116,8 @@ def create_post_controller(
                 resource_type=resource_kind
             )
             saved_media_url = upload_result.get("secure_url")
+            if not saved_media_url:
+                raise RuntimeError("Cloudinary did not return a secure media URL.")
 
             if detected_media_type == "video" and saved_media_url:
                 base_url, _ = os.path.splitext(saved_media_url)
@@ -168,6 +170,7 @@ def create_post_controller(
         text_content=text_content,
         media_url=saved_media_url,
         media_type=detected_media_type, # 🌟 Saves as: video, image, system_announcement, quote, or text
+        moderation_status="approved",
         thumbnail_url=saved_thumbnail_url,
         feeling=feeling,
         activity=activity,

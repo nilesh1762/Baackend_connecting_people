@@ -21,6 +21,7 @@ def get_user_media_gallery_controller(db: Session, target_user_id: int, limit: i
         db.query(PostModel)
         .filter(or_(PostModel.author_id == target_user_id, PostModel.user_id == target_user_id)) 
         .filter(or_(PostModel.is_deleted == False, PostModel.is_deleted.is_(None))) 
+        .filter(PostModel.moderation_status == "approved")
         
         # 🎯 THE FIX: Removed .media_url.isnot(None) and media_type filters entirely!
         # This allows standard text-only entries to pass through the database pipeline.

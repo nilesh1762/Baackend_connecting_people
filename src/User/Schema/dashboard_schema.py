@@ -11,6 +11,7 @@ class EngagementSchema(BaseModel):
     likes_count: int
     has_liked: bool
     comments_count: int
+    views_count: int
 
 class TextLayerSchema(BaseModel):
     body: Optional[str] = None
@@ -47,11 +48,17 @@ class CommentItemSchema(BaseModel):
 
 class FeedItemSchema(BaseModel):
     post_id: int
+    feed_item_id: Optional[str] = None
+    is_repost: bool = False
+    visibility: str = "anyone"
+    feed_created_at: Optional[datetime] = None
+    reposted_at: Optional[datetime] = None
+    reposted_by: Optional[AuthorSchema] = None
     layout_type: str
     score_weight: int
     created_at: datetime
     author: dict
-    engagement: dict
+    engagement: EngagementSchema
     components: dict
     # 🎯 🌟 THE FIX: Inform Pydantic that a post houses an array of comment objects!
     comments: List[CommentItemSchema] 

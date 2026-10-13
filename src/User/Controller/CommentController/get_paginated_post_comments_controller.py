@@ -1,7 +1,8 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_
 from typing import Dict, Any
-from src.User.model import PostCommentModel
+from fastapi import HTTPException, status
+from src.User.model import PostCommentModel, PostModel
 
 def get_paginated_post_comments_controller(
     post_id: int, 
@@ -9,6 +10,20 @@ def get_paginated_post_comments_controller(
     limit: int = 15, 
     offset: int = 0
 ) -> Dict[str, Any]:
+    is_approved = (
+        db.query(PostModel.id)
+        .filter(
+            PostModel.id == post_id,
+            PostModel.moderation_status == "approved",
+            PostModel.is_deleted == False,
+        )
+        .first()
+    )
+    if is_approved is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Post not found.",
+        )
     
     # 1. Fetch only top-level (parent) comments
     # 🎯 FIXES BUG 1: Includes comments where is_deleted is NULL

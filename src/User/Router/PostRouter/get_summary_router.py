@@ -19,6 +19,7 @@ def get_posts_feed(
     posts = (
         db.query(PostModel)
         .options(joinedload(PostModel.author))  # Force-loads the author object row metrics immediately
+        .filter(PostModel.moderation_status == "approved")
         .order_by(PostModel.created_at.desc())
         .offset(offset)
         .limit(limit)

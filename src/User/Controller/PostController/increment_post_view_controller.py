@@ -13,7 +13,10 @@ def increment_post_view_controller(db: Session, post_id: int, current_user_id: i
         # Locking the post serializes concurrent view requests for this post.
         post = (
             db.query(PostModel)
-            .filter(PostModel.id == post_id)
+            .filter(
+                PostModel.id == post_id,
+                PostModel.moderation_status == "approved",
+            )
             .with_for_update()
             .first()
         )

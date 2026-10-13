@@ -76,6 +76,7 @@ class UserModel(Base):
     location_name = Column(String(100), nullable=True, default=None)
     profile_category = Column(String(100), nullable=True, default=None)
     shared_posts = relationship("PostShareModel", back_populates="shared_by_user", cascade="all, delete-orphan")
+    reposts = relationship("PostRepostModel", back_populates="reposted_by_user", cascade="all, delete-orphan")
     education = relationship("UserEducationModel", back_populates="user", cascade="all, delete-orphan")
     status_presence = Column(String(20), default="offline", server_default="offline", nullable=False)
     #  The custom constructor to handle 'dateofbirth' correctly during initialization
@@ -242,17 +243,79 @@ class PostShareModel(Base):
     user_id = Column("USER_ID", Integer, ForeignKey("USER_TABLE.ID", ondelete="CASCADE"), nullable=False, index=True)
     post_id = Column("POST_ID", Integer, ForeignKey("POSTS_TABLE.ID", ondelete="CASCADE"), nullable=False, index=True)
     platform_target = Column("PLATFORM_TARGET", String(100), nullable=True, default="internal") 
+    idempotency_key = Column("IDEMPOTENCY_KEY", String(128), nullable=True)
     created_at = Column("CREATED_AT", DateTime, server_default=func.now())
 
-    # 🚀 FIXED BINDING: The database column names are matched explicitly in uppercase
     __table_args__ = (
-        UniqueConstraint('USER_ID', 'POST_ID', name='_user_post_share_uc'),
+        UniqueConstraint(
+            'USER_ID',
+            'IDEMPOTENCY_KEY',
+            name='USER_SHARE_IDEMPOTENCY_UC',
+        ),
     )
 
     # Virtual Relationships
     post = relationship("PostModel", back_populates="shares_log")
     shared_by_user = relationship("UserModel", back_populates="shared_posts")
-    
+    recipients = relationship(
+        "PostShareRecipientModel",
+        back_populates="share",
+        cascade="all, delete-orphan",
+    )
+
+
+class PostShareRecipientModel(Base):
+    __tablename__ = "POST_SHARE_RECIPIENTS"
+
+    id = Column("ID", Integer, Identity(start=1), primary_key=True)
+    share_id = Column(
+        "SHARE_ID",
+        Integer,
+        ForeignKey("POST_SHARES_TABLE.ID", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    recipient_id = Column(
+        "RECIPIENT_ID",
+        Integer,
+        ForeignKey("USER_TABLE.ID", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column("CREATED_AT", DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "SHARE_ID",
+            "RECIPIENT_ID",
+            name="POST_SHARE_RECIPIENT_UQ",
+        ),
+    )
+
+    share = relationship("PostShareModel", back_populates="recipients")
+    recipient = relationship("UserModel", foreign_keys=[recipient_id])
+
+
+class PostRepostModel(Base):
+    __tablename__ = "POST_REPOSTS_TABLE"
+
+    id = Column("ID", Integer, Identity(start=1), primary_key=True)
+    user_id = Column( "USER_ID", Integer, ForeignKey("USER_TABLE.ID", ondelete="CASCADE"),nullable=False,index=True, )
+    post_id = Column( "POST_ID", Integer, ForeignKey("POSTS_TABLE.ID", ondelete="CASCADE"), nullable=False,index=True, )
+    created_at = Column("CREATED_AT", DateTime, server_default=func.now(), nullable=False)
+    visibility = Column(
+        "VISIBILITY",
+        String(20),
+        default="anyone",
+        server_default="anyone",
+        nullable=False,
+    )
+    __table_args__ = ( UniqueConstraint("USER_ID", "POST_ID", name="POST_REPOST_USER_POST_UQ"), )
+
+    post = relationship("PostModel", back_populates="reposts")
+    reposted_by_user = relationship("UserModel", back_populates="reposts")
+
+
 class PostModel(Base):
     __tablename__ = "POSTS_TABLE"
 
@@ -260,6 +323,13 @@ class PostModel(Base):
     text_content = Column("TEXT_CONTENT", Text, nullable=True)
     media_url = Column("MEDIA_URL", String(512), nullable=True)
     media_type = Column("MEDIA_TYPE", String(50), nullable=True)
+    moderation_status = Column(
+        "MODERATION_STATUS",
+        String(20),
+        nullable=False,
+        default="approved",
+        server_default="approved",
+    )
     thumbnail_url = Column("THUMBNAIL_URL", String(512), nullable=True)
     created_at = Column("CREATED_AT", DateTime, server_default=func.now(), index=True)
     is_deleted = Column("IS_DELETED", Boolean, default=False, nullable=False)
@@ -287,6 +357,7 @@ class PostModel(Base):
     author = relationship("UserModel", back_populates="posts", foreign_keys=[author_id])
     likes_log = relationship("PostLikeModel", back_populates="post", cascade="all, delete-orphan")
     shares_log = relationship("PostShareModel", back_populates="post", cascade="all, delete-orphan")
+    reposts = relationship("PostRepostModel", back_populates="post", cascade="all, delete-orphan")
     views_log = relationship("PostViewModel", back_populates="post", cascade="all, delete-orphan")
     tagged_friends = relationship("PostTagModel", back_populates="post", cascade="all, delete-orphan")
     

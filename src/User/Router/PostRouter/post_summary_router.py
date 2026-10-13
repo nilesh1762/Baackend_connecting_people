@@ -29,7 +29,7 @@ async def create_new_feed_post(
     """Multipart form endpoint processing post creations for text, images, animated GIFs, or streaming videos with interactive social tag parameters."""
     
     # 🚀 Pass all the fields cleanly directly down to your controller function
-    return create_post_controller(
+    post = create_post_controller(
         text_content=text_content,
         file=file,
         feeling=feeling,
@@ -39,3 +39,15 @@ async def create_new_feed_post(
         db=db,
         current_user_id=current_user_id
     )
+    if post.moderation_status == "pending":
+        return {
+            "id": post.id,
+            "text_content": post.text_content,
+            "media_url": None,
+            "media_type": post.media_type,
+            "moderation_status": post.moderation_status,
+            "thumbnail_url": None,
+            "created_at": post.created_at,
+            "user_id": post.user_id,
+        }
+    return post

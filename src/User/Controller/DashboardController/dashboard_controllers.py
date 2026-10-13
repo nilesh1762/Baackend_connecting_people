@@ -1,8 +1,14 @@
 from sqlalchemy.orm import Session, aliased, selectinload
-from sqlalchemy import func, desc, case, exists, and_
+from sqlalchemy import func, desc, case, exists, and_, literal, or_, union_all
 from typing import Dict, Any
 
-from src.User.model import UserModel, PostModel, Friendship, PostCommentModel
+from src.User.model import (
+    UserModel,
+    PostModel,
+    PostRepostModel,
+    Friendship,
+    PostCommentModel,
+)
 
 def get_first_time_dashboard_feed_controller(current_user_id: int, db: Session, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
     # ----------------------------------------------------
@@ -45,16 +51,100 @@ def get_first_time_dashboard_feed_controller(current_user_id: int, db: Session, 
     # ----------------------------------------------------
     # STEP 4: Query the Personalized Target Feed
     # ----------------------------------------------------
-    raw_posts = db.query(PostModel, feed_score).join(
-        AuthorModel, PostModel.author_id == AuthorModel.id
-    ).options(
-        selectinload(PostModel.comments_log).selectinload(PostCommentModel.author)
+    original_entries = db.query(
+        PostModel.id.label("post_id"),
+        PostModel.created_at.label("feed_created_at"),
+        literal(0).label("is_repost"),
+        literal(None, type_=PostRepostModel.id.type).label("repost_id"),
+        literal(None, type_=UserModel.id.type).label("reposter_id"),
+        literal("anyone").label("visibility"),
     ).filter(
         PostModel.is_deleted == False,
-        PostModel.author_id != current_user_id
+        PostModel.author_id.is_not(None),
+        PostModel.author_id != current_user_id,
+        PostModel.moderation_status == "approved",
+    )
+    repost_entries = db.query(
+        PostRepostModel.post_id.label("post_id"),
+        PostRepostModel.created_at.label("feed_created_at"),
+        literal(1).label("is_repost"),
+        PostRepostModel.id.label("repost_id"),
+        PostRepostModel.user_id.label("reposter_id"),
+        PostRepostModel.visibility.label("visibility"),
+    ).join(
+        PostModel, PostModel.id == PostRepostModel.post_id
+    ).filter(
+        PostModel.is_deleted == False,
+        PostModel.author_id.is_not(None),
+        PostModel.moderation_status == "approved",
+        or_(
+            PostRepostModel.visibility == "anyone",
+            PostRepostModel.user_id == current_user_id,
+            exists().where(
+                and_(
+                    Friendship.user_id == PostRepostModel.user_id,
+                    Friendship.friend_id == current_user_id,
+                    Friendship.is_deleted == False,
+                )
+            ),
+        ),
+    )
+    all_feed_entries = union_all(
+        original_entries,
+        repost_entries,
+    ).subquery("all_feed_entries")
+    ranked_feed_entries = db.query(
+        all_feed_entries.c.post_id,
+        all_feed_entries.c.feed_created_at,
+        all_feed_entries.c.is_repost,
+        all_feed_entries.c.repost_id,
+        all_feed_entries.c.reposter_id,
+        all_feed_entries.c.visibility,
+        func.row_number().over(
+            partition_by=all_feed_entries.c.post_id,
+            order_by=(
+                case(
+                    (all_feed_entries.c.reposter_id == current_user_id, 1),
+                    else_=0,
+                ).desc(),
+                all_feed_entries.c.is_repost.desc(),
+                all_feed_entries.c.feed_created_at.desc(),
+                all_feed_entries.c.repost_id.desc(),
+            ),
+        ).label("entry_rank"),
+    ).subquery("ranked_feed_entries")
+    feed_entries = db.query(
+        ranked_feed_entries.c.post_id,
+        ranked_feed_entries.c.feed_created_at,
+        ranked_feed_entries.c.is_repost,
+        ranked_feed_entries.c.repost_id,
+        ranked_feed_entries.c.reposter_id,
+        ranked_feed_entries.c.visibility,
+    ).filter(
+        ranked_feed_entries.c.entry_rank == 1,
+    ).subquery("feed_entries")
+    ReposterModel = aliased(UserModel, name="post_reposter")
+
+    raw_posts = db.query(
+        PostModel,
+        feed_score,
+        feed_entries.c.feed_created_at,
+        feed_entries.c.is_repost,
+        feed_entries.c.repost_id,
+        feed_entries.c.visibility,
+        ReposterModel,
+    ).join(
+        feed_entries, PostModel.id == feed_entries.c.post_id
+    ).join(
+        AuthorModel, PostModel.author_id == AuthorModel.id
+    ).outerjoin(
+        ReposterModel, ReposterModel.id == feed_entries.c.reposter_id
+    ).options(
+        selectinload(PostModel.comments_log).selectinload(PostCommentModel.author)
     ).order_by(
         feed_score.desc(),  
-        PostModel.created_at.desc()
+        feed_entries.c.feed_created_at.desc(),
+        PostModel.id.desc(),
     ).offset(offset).limit(limit + 1).all()
 
     has_more = len(raw_posts) > limit
@@ -64,7 +154,15 @@ def get_first_time_dashboard_feed_controller(current_user_id: int, db: Session, 
     # STEP 5: Transform Database Tuples into UI Component Data
     # ----------------------------------------------------
     formatted_feed = []
-    for post, score in posts_to_process:
+    for (
+        post,
+        score,
+        feed_created_at,
+        is_repost,
+        repost_id,
+        feed_visibility,
+        reposter,
+    ) in posts_to_process:
         layout_type = "STANDARD_TEXT"
         post_comments_array = []
 
@@ -108,6 +206,16 @@ def get_first_time_dashboard_feed_controller(current_user_id: int, db: Session, 
 
         post_data = {
             "post_id": post.id,
+            "feed_item_id": f"repost:{repost_id}" if is_repost else f"post:{post.id}",
+            "is_repost": bool(is_repost),
+            "visibility": feed_visibility,
+            "feed_created_at": feed_created_at.isoformat() if feed_created_at else None,
+            "reposted_at": feed_created_at.isoformat() if is_repost and feed_created_at else None,
+            "reposted_by": {
+                "id": reposter.id,
+                "name": f"{reposter.firstname} {reposter.lastname}",
+                "avatar": reposter.profile_image_url or "",
+            } if is_repost and reposter else None,
             "layout_type": layout_type,
             "score_weight": int(score),
             # 🎯 FIXED: Convert datetime objects to string format to prevent JSON crash loops
@@ -120,8 +228,8 @@ def get_first_time_dashboard_feed_controller(current_user_id: int, db: Session, 
             "engagement": {
                 "likes_count": post.likes_count or 0,
                 "has_liked": False,
-                # 🎯 Ensure this looks at the actual table column we added earlier!
-                "comments_count": getattr(post, "comments_count", 0) 
+                "comments_count": post.comments_count or 0,
+                "views_count": post.views_count or 0,
             },
             "comments": post_comments_array, 
             "components": {
